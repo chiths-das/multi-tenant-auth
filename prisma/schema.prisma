@@ -1,0 +1,184 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique
+  passwordHash String?  @map("password_hash")
+  displayName  String   @map("display_name")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  memberships    TenantMembership[]
+  linkedAccounts LinkedAccount[]
+  refreshTokens  RefreshToken[]
+
+  @@map("users")
+}
+
+model Tenant {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  slug      String   @unique
+  domain    String?  @unique
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  memberships   TenantMembership[]
+  roles         Role[]
+  authProviders AuthProvider[]
+  refreshTokens RefreshToken[]
+
+  @@map("tenants")
+}
+
+model TenantMembership {
+  id       String           @id @default(uuid()) @db.Uuid
+  userId   String           @map("user_id") @db.Uuid
+  tenantId String           @map("tenant_id") @db.Uuid
+  roleId   String           @map("role_id") @db.Uuid
+  status   MembershipStatus @default(ACTIVE)
+  joinedAt DateTime         @default(now()) @map("joined_at")
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  role   Role   @relation(fields: [roleId], references: [id])
+
+  @@unique([userId, tenantId])
+  @@map("tenant_memberships")
+}
+
+enum MembershipStatus {
+  ACTIVE
+  INACTIVE
+  INVITED
+}
+
+model LinkedAccount {
+  id             String   @id @default(uuid()) @db.Uuid
+  userId         String   @map("user_id") @db.Uuid
+  providerType   String   @map("provider_type")
+  providerUserId String   @map("provider_user_id")
+  accessToken    String?  @map("access_token")
+  refreshToken   String?  @map("refresh_token")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([providerType, providerUserId])
+  @@map("linked_accounts")
+}
+
+model Role {
+  id       String  @id @default(uuid()) @db.Uuid
+  tenantId String  @map("tenant_id") @db.Uuid
+  name     String
+  isSystem Boolean @default(false) @map("is_system")
+
+  tenant          Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  memberships     TenantMembership[]
+  rolePermissions RolePermission[]
+
+  @@unique([tenantId, name])
+  @@map("roles")
+}
+
+model Permission {
+  id       String @id @default(uuid()) @db.Uuid
+  resource String
+  action   String
+
+  rolePermissions RolePermission[]
+
+  @@unique([resource, action])
+  @@map("permissions")
+}
+
+model RolePermission {
+  id           String @id @default(uuid()) @db.Uuid
+  roleId       String @map("role_id") @db.Uuid
+  permissionId String @map("permission_id") @db.Uuid
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model AuthProvider {
+  id       String       @id @default(uuid()) @db.Uuid
+  tenantId String       @map("tenant_id") @db.Uuid
+  type     ProviderType
+  enabled  Boolean      @default(false)
+
+  tenant             Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  oauthProviderConfig OAuthProviderConfig?
+  samlProviderConfig  SamlProviderConfig?
+
+  @@unique([tenantId, type])
+  @@map("auth_providers")
+}
+
+enum ProviderType {
+  GOOGLE
+  MICROSOFT
+  SAML
+}
+
+model OAuthProviderConfig {
+  id             String  @id @default(uuid()) @db.Uuid
+  authProviderId String  @unique @map("auth_provider_id") @db.Uuid
+  tenantId       String  @map("tenant_id") @db.Uuid
+  clientId       String  @map("client_id")
+  clientSecret   String  @map("client_secret")
+  scopes         String  @default("openid email profile")
+  authUrl        String? @map("auth_url")
+  tokenUrl       String? @map("token_url")
+  userInfoUrl    String? @map("user_info_url")
+
+  authProvider AuthProvider @relation(fields: [authProviderId], references: [id], onDelete: Cascade)
+
+  @@map("oauth_provider_configs")
+}
+
+model SamlProviderConfig {
+  id                     String  @id @default(uuid()) @db.Uuid
+  authProviderId         String  @unique @map("auth_provider_id") @db.Uuid
+  tenantId               String  @map("tenant_id") @db.Uuid
+  entityId               String  @map("entity_id")
+  ssoUrl                 String  @map("sso_url")
+  certificate            String?
+  certificateFingerprint String? @map("certificate_fingerprint")
+  signatureAlgorithm     String  @default("sha256") @map("signature_algorithm")
+  digestAlgorithm        String  @default("sha256") @map("digest_algorithm")
+  metadataXml            String? @map("metadata_xml")
+
+  authProvider AuthProvider @relation(fields: [authProviderId], references: [id], onDelete: Cascade)
+
+  @@map("saml_provider_configs")
+}
+
+model RefreshToken {
+  id         String    @id @default(uuid()) @db.Uuid
+  tokenHash  String    @unique @map("token_hash")
+  userId     String    @map("user_id") @db.Uuid
+  tenantId   String    @map("tenant_id") @db.Uuid
+  familyId   String    @map("family_id") @db.Uuid
+  expiresAt  DateTime  @map("expires_at")
+  revokedAt  DateTime? @map("revoked_at")
+  replacedBy String?   @map("replaced_by") @db.Uuid
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("refresh_tokens")
+}
