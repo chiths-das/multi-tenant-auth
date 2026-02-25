@@ -24,6 +24,29 @@ interface LoginInput {
   tenantId: string;
 }
 
+interface LoginStep1Input {
+  email: string;
+  password: string;
+}
+
+interface LoginStep1Result {
+  userId: string;
+  email: string;
+  displayName: string;
+  tenants: Array<{
+    id: string;
+    name: string;
+    slug: string;
+    role: string;
+    status: string;
+  }>;
+}
+
+interface LoginSelectInput {
+  userId: string;
+  tenantId: string;
+}
+
 export async function register(input: RegisterInput): Promise<TokenPair> {
   const prisma = getPrisma();
   const { email, password, displayName, tenantId } = input;
@@ -96,6 +119,64 @@ export async function login(input: LoginInput): Promise<TokenPair> {
 
   const permissions = await resolvePermissions(membership.roleId);
   return issueTokenPair(result.userId, tenantId, membership.role.name, permissions);
+}
+
+/**
+ * Step 1: Authenticate with email + password. Returns the user's identity
+ * and all tenant memberships so the client can pick which tenant to log into.
+ */
+export async function loginStep1(input: LoginStep1Input): Promise<LoginStep1Result> {
+  const prisma = getPrisma();
+  const { email, password } = input;
+
+  const strategy = getStrategy('local');
+  const result = await strategy.authenticate({ email, password });
+
+  const memberships = await prisma.tenantMembership.findMany({
+    where: { userId: result.userId },
+    include: {
+      tenant: { select: { id: true, name: true, slug: true } },
+      role: { select: { name: true } },
+    },
+  });
+
+  if (memberships.length === 0) {
+    throw new UnauthorizedError('User is not a member of any tenant');
+  }
+
+  return {
+    userId: result.userId,
+    email: result.email,
+    displayName: result.displayName,
+    tenants: memberships.map((m) => ({
+      id: m.tenant.id,
+      name: m.tenant.name,
+      slug: m.tenant.slug,
+      role: m.role.name,
+      status: m.status,
+    })),
+  };
+}
+
+/**
+ * Step 2: Select a tenant and get tokens. If the user only belongs to one
+ * tenant, the client can call this immediately after step 1.
+ */
+export async function loginSelect(input: LoginSelectInput): Promise<TokenPair> {
+  const prisma = getPrisma();
+  const { userId, tenantId } = input;
+
+  const membership = await prisma.tenantMembership.findUnique({
+    where: { userId_tenantId: { userId, tenantId } },
+    include: { role: true },
+  });
+
+  if (!membership || membership.status !== 'ACTIVE') {
+    throw new UnauthorizedError('User is not an active member of this tenant');
+  }
+
+  const permissions = await resolvePermissions(membership.roleId);
+  return issueTokenPair(userId, tenantId, membership.role.name, permissions);
 }
 
 export async function refresh(rawRefreshToken: string): Promise<TokenPair> {

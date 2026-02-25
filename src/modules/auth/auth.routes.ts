@@ -23,6 +23,16 @@ const loginSchema = z.object({
   tenantId: z.string().uuid(),
 });
 
+const loginStep1Schema = z.object({
+  email: z.string().email(),
+  password: z.string(),
+});
+
+const loginSelectSchema = z.object({
+  userId: z.string().uuid(),
+  tenantId: z.string().uuid(),
+});
+
 const refreshSchema = z.object({
   refreshToken: z.string().min(1),
 });
@@ -43,6 +53,26 @@ authRouter.post('/register', validate({ body: registerSchema }), async (req, res
 authRouter.post('/login', validate({ body: loginSchema }), async (req, res, next) => {
   try {
     const tokens = await authService.login(req.body);
+    res.json(tokens);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Two-step login: Step 1 — authenticate and get tenant list
+authRouter.post('/login/step1', validate({ body: loginStep1Schema }), async (req, res, next) => {
+  try {
+    const result = await authService.loginStep1(req.body);
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Two-step login: Step 2 — select tenant and get tokens
+authRouter.post('/login/select', validate({ body: loginSelectSchema }), async (req, res, next) => {
+  try {
+    const tokens = await authService.loginSelect(req.body);
     res.json(tokens);
   } catch (err) {
     next(err);
